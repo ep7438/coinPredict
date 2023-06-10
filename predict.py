@@ -8,6 +8,9 @@ import coinmarketcapapi
 import pandas as pd                         
 import os
 
+# start timer
+start_time = time.time()
+
 # connect to cb, cmc
 # api.dat stores cb api key with wallet:accounts:read permission
 # on first two lines and cmc api key on third 
@@ -15,11 +18,12 @@ handshake = open('api.dat', 'r').read().splitlines()
 client = Client(handshake[0], handshake[1])
 cmc = coinmarketcapapi.CoinMarketCapAPI(handshake[2])
 
-# for cb price data
+# for cb trading data
 cbp = cbpro.PublicClient() 
 
-# display dataframe with row truncate 
-pd.set_option('display.max_rows', 20)
+# truncate rows
+# df has max 300 rows 
+pd.set_option('display.max_rows', 500)
 
 
 #####################
@@ -29,13 +33,17 @@ pd.set_option('display.max_rows', 20)
 # remove temp files from previous runs
 
 def cleanup():
-    if (os.path.exists("cb_Price.csv")):
-        print("cb_Price.csv exists") # OUTPUT
-        os.remove("cb_Price.csv")
+    if (os.path.exists("tmp-cb_CurrentPrice.csv")):
+        os.remove("tmp-cb_CurrentPrice.csv")
 
-    if (os.path.exists("cmc_QL.csv")):
-        print("cmc_QL.csv exists") # OUTPUT
-        os.remove("cmc_QL.csv")
+    if (os.path.exists("tmp-cmc_LatestQuotes.csv")):
+        os.remove("tmp-cmc_LatestQuotes.csv")
+
+    if (os.path.exists("tmp-the_Wire.txt")):
+        os.remove("tmp-the_Wire.txt")
+
+    if (os.path.exists("tmp-cb_TradeData.txt")):
+        os.remove("tmp-cb_TradeData.txt")
 
 #####################
 ###  END CLEANUP  ###
@@ -51,16 +59,19 @@ def cleanup():
 
 def namesPrices():
 
-    # OUTPUT columns to file
-    outfile = open("cb_Price.csv", "w")
-    outfile.write("name,price")
-    outfile.write("\n")
+    # OUTPUT files
+    cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
+    wirefile = open("tmp-the_Wire.txt", "w") # what's happeninng
+    wirefile.write("Get trade data from coinbase -> \n")
+    tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe
 
     # pull information from cmc
-    # need ordered list of id numbers 
+    # snapshot of global trading data
+    # need ordered list of all (233) cmc id numbers  
+    # id="1,2" are bitcoin and litecoin for example
     data_quote = cmc.cryptocurrency_quotes_latest(id="1,2", convert='USD')
     df = pd.DataFrame.from_records(data_quote.data)
-    df.to_csv("cmc_QL.csv") # OUTPUT
+    df.to_csv("tmp-cmc_LatestQuotes.csv") # OUTPUT
 
     # initialize next wallet id and declare empty list
     next = None
@@ -91,17 +102,20 @@ def namesPrices():
                 names.append(tempStr) # add to list
 
                 # pull historic rates for crypto: 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
-                # get historic rates function returns 300 data points
+                # get historic rates function returns 300 rows
                 # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
                 # this program focuses on short term data
 
+                # snapshot of local trading data
+                # now minus 5 hours -> from cb perspective
+                # date, open, high, low, close, volume
                 raw = cbp.get_product_historic_rates(product_id = tempStr, granularity = 60)
                 
                 # put in chronological order
                 raw.reverse()
 
-                # short pause so cbpro calls don't error out
-                # sometimes required on high performance machines
+                # pause so cbpro calls don't error out
+                # sometimes required on high performance environments
                 # time.sleep(0.10)
                 
                 # send to pandas dataframe
@@ -114,20 +128,24 @@ def namesPrices():
                 current = df["Close"].iloc[-1]
                 current = float(current)
 
-                # OUTPUT
+                # remove -USD
                 tempStr = tempStr.replace("-USD","")
-                print(tempStr)                  # console
-                outfile.write(tempStr)          # file
-                outfile.write(",")
-                outfile.write(str(current))
-                outfile.write("\n")
-
+                
+                # OUTPUT
+                wirefile.write("    " + tempStr + "\n")             # tmp-the_Wire.txt         
+                cbfile.write(tempStr + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
+                tradefile.write("\n" + tempStr + "\n")              # tmp-cb_TradeData.txt
+                tradefile.write(str(df))
+                tradefile.write("\n\n")
+        
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
     
-    outfile.close() # close csv file
-
+    # end files
+    cbfile.close() 
+    wirefile.close()
+    tradefile.close() 
 
 ################################
 ######  END NAMES&PRICES  ######
@@ -169,3 +187,10 @@ def namesPrices():
 
 cleanup()
 namesPrices()
+
+# OUTPUT console rutime
+# avg 1.6 min so far
+# lubuntu linux on toshiba satellite l755d
+end_time = time.time()
+print("--- %s seconds ---" % (end_time - start_time))
+print("--- %s minutes ---" % ((end_time - start_time) / 60))
