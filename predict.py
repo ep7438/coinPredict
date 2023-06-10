@@ -1,36 +1,67 @@
 # imports
 import datetime
-import schedule
+import schedule                             
 import time
-from coinbase.wallet.client import Client
-import cbpro
-import pandas as pd
+from coinbase.wallet.client import Client   
+import cbpro                                
+import coinmarketcapapi
+import pandas as pd                         
+import os
 
-# connect to coinbase
+# connect to cb, cmc
+# api.dat stores cb api key with wallet:accounts:read permission
+# on first two lines and cmc api key on third 
 handshake = open('api.dat', 'r').read().splitlines()
 client = Client(handshake[0], handshake[1])
+cmc = coinmarketcapapi.CoinMarketCapAPI(handshake[2])
 
-# for price data
+# for cb price data
 cbp = cbpro.PublicClient() 
 
-# display dataframe row truncate 
+# display dataframe with row truncate 
 pd.set_option('display.max_rows', 20)
+
+
+#####################
+### BEGIN CLEANUP ###
+#####################
+
+# remove temp files from previous runs
+
+def cleanup():
+    if (os.path.exists("cb_Price.csv")):
+        print("cb_Price.csv exists") # OUTPUT
+        os.remove("cb_Price.csv")
+
+    if (os.path.exists("cmc_QL.csv")):
+        print("cmc_QL.csv exists") # OUTPUT
+        os.remove("cmc_QL.csv")
+
+#####################
+###  END CLEANUP  ###
+#####################
 
 
 ################################
 ###### BEGIN NAMES&PRICES ######
 ################################
 
-# connect to coinbase api and generate list of crypto names
-# only part of the program which accesses the coinbase api key
+# connect to coinbase and cmc 
+# make names and price dataframe
 
 def namesPrices():
-    # counter var
-    c = 1
-    
-    # output to file
-    outfile = open("output.txt", "w")
-    
+
+    # OUTPUT columns to file
+    outfile = open("cb_Price.csv", "w")
+    outfile.write("name,price")
+    outfile.write("\n")
+
+    # pull information from cmc
+    # need ordered list of id numbers 
+    data_quote = cmc.cryptocurrency_quotes_latest(id="1,2", convert='USD')
+    df = pd.DataFrame.from_records(data_quote.data)
+    df.to_csv("cmc_QL.csv") # OUTPUT
+
     # initialize next wallet id and declare empty list
     next = None
     names = []
@@ -49,7 +80,12 @@ def namesPrices():
             tempStr = tempStr.replace(" Wallet", "")
             tempStr = tempStr + "-USD" 
 
-            # filter out staked, delisted, stable, etc.            
+            # filter out staked, delisted, stable, etc.
+            # if program errors out, the cause is likely here
+            # example scenario -> cb adds a new staked wallet, 
+            #                     no price data to pull,
+            #                     error at raw.reverse()
+            #                     print(tempStr) to debug               
             if tempStr not in "Staked SOL-USD" and tempStr not in "Staked ATOM-USD" and tempStr not in "Staked XTZ-USD" and tempStr not in "Staked ADA-USD" and tempStr not in "ETH2-USD" and tempStr not in "REPV2-USD" and tempStr not in "USDC-USD" and tempStr not in "Cash (USD)-USD" and tempStr not in "GNT-USD" and tempStr not in "RGT-USD" and tempStr not in "TRIBE-USD" and tempStr not in "UST-USD" and tempStr not in "WLUNA-USD" and tempStr not in "MUSD-USD" and tempStr not in "UPI-USD" and tempStr not in "RGT-USD" and tempStr not in "XRP-USD" and tempStr not in "USDT-USD" and tempStr not in "DAI-USD" and tempStr not in "BUSD-USD" and tempStr not in "GUSD-USD" and tempStr not in "RLY-USD" and tempStr not in "KEEP-USD" and tempStr not in "NU-USD" and tempStr not in "MIR-USD" and tempStr not in "OMG-USD" and tempStr not in "REP-USD" and tempStr not in "LOOM-USD" and tempStr not in "YFII-USD" and tempStr not in "GALA-USD" and tempStr not in "STG-USD":
                 
                 names.append(tempStr) # add to list
@@ -65,31 +101,32 @@ def namesPrices():
                 raw.reverse()
 
                 # short pause so cbpro calls don't error out
+                # sometimes required on high performance machines
                 # time.sleep(0.10)
                 
                 # send to pandas dataframe
-                df = pd.DataFrame(raw, columns = [ "Date", "Open", "High", "Low", "Close", "Volume" ]) 
+                df = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
 
                 # convert date to readable format
                 df['Date'] = pd.to_datetime(df['Date'].astype(str), unit='s')
 
-                # OUTPUT
-                outfile.write("\n\n")
-                outfile.write(str(c))
-                outfile.write(". ")
-                outfile.write(tempStr)
-                outfile.write("\n")
-                outfile.write(str(df))
-                outfile.write("\n")
+                # last price
+                current = df["Close"].iloc[-1]
+                current = float(current)
 
-                # increment counter
-                c += 1
+                # OUTPUT
+                tempStr = tempStr.replace("-USD","")
+                print(tempStr)                  # console
+                outfile.write(tempStr)          # file
+                outfile.write(",")
+                outfile.write(str(current))
+                outfile.write("\n")
 
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
     
-    outfile.close() # close file
+    outfile.close() # close csv file
 
 
 ################################
@@ -101,6 +138,9 @@ def namesPrices():
 ### BEGIN SCHEDULE ###
 ######################
 
+# this framework allows program to keep running
+# with scheduled function calls
+
 # def run():
     # print current time
     # current_time = datetime.datetime.now()
@@ -111,8 +151,7 @@ def namesPrices():
 # schedule.every().minute.at(":00").do(run) # every minute at 00 seconds
 # schedule.every().hour.at(":42").do(run) # every hour at 42 minutes
 
-# void main()
-namesPrices()
+# void main
 
 # keep running 
 # while True:
@@ -122,3 +161,11 @@ namesPrices()
 ######################
 ###  END SCHEDULE  ###
 ######################
+
+
+#################
+### VOID MAIN ###
+#################
+
+cleanup()
+namesPrices()
