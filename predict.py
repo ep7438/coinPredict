@@ -7,6 +7,7 @@ import cbpro
 import coinmarketcapapi
 import pandas as pd                         
 import os
+import csv
 
 # start timer
 start_time = time.time()
@@ -31,6 +32,7 @@ pd.set_option('display.max_rows', 500)
 #####################
 
 # remove temp files from previous runs
+# read from file to create dictionary name : cmcid
 
 def cleanup():
     if (os.path.exists("tmp-cb_CurrentPrice.csv")):
@@ -55,7 +57,16 @@ def cleanup():
 ################################
 
 # connect to coinbase and cmc 
-# make names and price dataframe
+# make dataframes
+
+# creates four output files
+# temporary files, new versions on each run
+#   tmp-cb_CurrentPrice.csv -> name,price
+#   tmp-cb_TradeData.txt -> all dataframes printed, 70000+ lines
+#   tmp-cmc_LatestQuotes.csv -> cmc snapshot output
+#   tmp-the_Wire.txt -> debug output file
+# input file
+#   inp-cmc_id.csv -> name,cmcid,experimental asset bool
 
 def namesPrices():
 
@@ -65,17 +76,18 @@ def namesPrices():
     wirefile.write("Get trade data from coinbase -> \n")
     tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe
 
-    # pull information from cmc
-    # snapshot of global trading data
-    # need ordered list of all (233) cmc id numbers  
-    # id="1,2" are bitcoin and litecoin for example
-    data_quote = cmc.cryptocurrency_quotes_latest(id="1,2", convert='USD')
-    df = pd.DataFrame.from_records(data_quote.data)
-    df.to_csv("tmp-cmc_LatestQuotes.csv") # OUTPUT
+    # create dictionary
+    with open('inp-cmc_id.csv', mode='r') as infile:
+        reader = csv.reader(infile)
+        mydict = dict((rows[0],rows[1]) for rows in reader)
 
-    # initialize next wallet id and declare empty list
+    # OUTPUT console key-value pairs
+    wirefile.write(str(mydict))
+
+    # initialize next wallet id and declare empty lists
     next = None
     names = []
+    order = []
 
     # coinbase loop
     # runs until the next_uri parameter is none
@@ -91,15 +103,21 @@ def namesPrices():
             tempStr = tempStr.replace(" Wallet", "")
             tempStr = tempStr + "-USD" 
 
-            # filter out staked, delisted, stable, etc.
+            # filter out staked, delisted, stable, etc. 
+            #   6/11/23 -> don't forget to integrate experimental asset bool somehow
+            #     IDEA -> move all the dataframe activity outside of this statement
+            #               with almost two minute runtime before any technical analysis 
+            #               indicators or machine learning means this needs streamlining
+            #               like only runs dataframes when necessary 
             # if program errors out, the cause is likely here
             # example scenario -> cb adds a new staked wallet, 
             #                     no price data to pull,
             #                     error at raw.reverse()
             #                     print(tempStr) to debug               
-            if tempStr not in "Staked SOL-USD" and tempStr not in "Staked ATOM-USD" and tempStr not in "Staked XTZ-USD" and tempStr not in "Staked ADA-USD" and tempStr not in "ETH2-USD" and tempStr not in "REPV2-USD" and tempStr not in "USDC-USD" and tempStr not in "Cash (USD)-USD" and tempStr not in "GNT-USD" and tempStr not in "RGT-USD" and tempStr not in "TRIBE-USD" and tempStr not in "UST-USD" and tempStr not in "WLUNA-USD" and tempStr not in "MUSD-USD" and tempStr not in "UPI-USD" and tempStr not in "RGT-USD" and tempStr not in "XRP-USD" and tempStr not in "USDT-USD" and tempStr not in "DAI-USD" and tempStr not in "BUSD-USD" and tempStr not in "GUSD-USD" and tempStr not in "RLY-USD" and tempStr not in "KEEP-USD" and tempStr not in "NU-USD" and tempStr not in "MIR-USD" and tempStr not in "OMG-USD" and tempStr not in "REP-USD" and tempStr not in "LOOM-USD" and tempStr not in "YFII-USD" and tempStr not in "GALA-USD" and tempStr not in "STG-USD":
+            if tempStr not in "Staked SOL-USD" and tempStr not in "Staked ATOM-USD" and tempStr not in "Staked XTZ-USD" and tempStr not in "Staked ADA-USD" and tempStr not in "ETH2-USD" and tempStr not in "REPV2-USD" and tempStr not in "USDC-USD" and tempStr not in "Cash (USD)-USD" and tempStr not in "GNT-USD" and tempStr not in "RGT-USD" and tempStr not in "TRIBE-USD" and tempStr not in "UST-USD" and tempStr not in "WLUNA-USD" and tempStr not in "MUSD-USD" and tempStr not in "UPI-USD" and tempStr not in "RGT-USD" and tempStr not in "XRP-USD" and tempStr not in "USDT-USD" and tempStr not in "DAI-USD" and tempStr not in "BUSD-USD" and tempStr not in "GUSD-USD" and tempStr not in "RLY-USD" and tempStr not in "KEEP-USD" and tempStr not in "NU-USD" and tempStr not in "MIR-USD" and tempStr not in "OMG-USD" and tempStr not in "REP-USD" and tempStr not in "LOOM-USD" and tempStr not in "YFII-USD" and tempStr not in "GALA-USD" and tempStr not in "STG-USD" and tempStr not in "PAX-USD":
                 
-                names.append(tempStr) # add to list
+                # add to list
+                names.append(tempStr)
 
                 # pull historic rates for crypto: 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
                 # get historic rates function returns 300 rows
@@ -128,20 +146,51 @@ def namesPrices():
                 current = df["Close"].iloc[-1]
                 current = float(current)
 
-                # remove -USD
+                # remove -USD, order used for cmc snapshot 
                 tempStr = tempStr.replace("-USD","")
-                
+                order.append(mydict.get(tempStr))
+
                 # OUTPUT
                 wirefile.write("    " + tempStr + "\n")             # tmp-the_Wire.txt         
                 cbfile.write(tempStr + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
                 tradefile.write("\n" + tempStr + "\n")              # tmp-cb_TradeData.txt
                 tradefile.write(str(df))
                 tradefile.write("\n\n")
-        
+
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
     
+    # OUTSIDE loop activity starts here
+
+    # for id=
+    idBuild = ""
+    for i in order:
+        idBuild += i
+        idBuild += ","
+    
+    # remove last ',' char
+    idBuild = idBuild[:-1]
+    
+    # OUTPUT idBuild and order must match
+    wirefile.write(idBuild + "\n")
+    wirefile.write(str(order))
+    wirefile.write("\n")
+
+    # pull information from cmc
+    # snapshot of global trading data
+    # not unlimited amount of api calls  
+    # id="1,2" are bitcoin and litecoin for example
+    #   need to retrieve one data point, like percent_change_1h
+    data_quote = cmc.cryptocurrency_quotes_latest(id=idBuild, convert='USD')
+    df = pd.DataFrame.from_records(data_quote.data)
+    df.to_csv("tmp-cmc_LatestQuotes.csv") # OUTPUT
+    
+    # two data sources achieved
+    # the above works but the id order output doesn't match the input
+    #   much text parsing required
+    #   possible pattern, row 14, number of "}}" matches number cryptos
+
     # end files
     cbfile.close() 
     wirefile.close()
@@ -185,12 +234,14 @@ def namesPrices():
 ### VOID MAIN ###
 #################
 
+# run once, no schedule
 cleanup()
 namesPrices()
 
 # OUTPUT console rutime
-# avg 1.6 min so far
+# avg 1.6 min
 # lubuntu linux on toshiba satellite l755d
+# vscode and python 2.7.18
 end_time = time.time()
 print("--- %s seconds ---" % (end_time - start_time))
 print("--- %s minutes ---" % ((end_time - start_time) / 60))
