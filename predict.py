@@ -9,12 +9,12 @@ import pandas as pd
 import os
 import csv
 
-# start timer
-start_time = time.time()
+start_time = time.time() # start timer
 
 # connect to cb, cmc
 # api.dat stores cb api key with wallet:accounts:read permission
-# on first two lines and cmc api key on third 
+# on first two lines and cmc api key on third
+# required to execute script 
 handshake = open('api.dat', 'r').read().splitlines()
 client = Client(handshake[0], handshake[1])
 cmc = coinmarketcapapi.CoinMarketCapAPI(handshake[2])
@@ -22,19 +22,18 @@ cmc = coinmarketcapapi.CoinMarketCapAPI(handshake[2])
 # for cb trading data
 cbp = cbpro.PublicClient() 
 
-# truncate rows
-# df has max 300 rows 
+# pandas toggle all data
 pd.set_option('display.max_rows', 500)
+pd.set_option('display.max_columns', 50)
+# pd.set_option('display.width', None) # None errors out in python 2.7.18
+# pd.set_option('display.max_colwidth', None)
 
 
 #####################
 ### BEGIN CLEANUP ###
 #####################
 
-# remove temp files from previous runs
-# read from file to create dictionary name : cmcid
-
-def cleanup():
+def cleanup(): # remove temp files from previous runs
     if (os.path.exists("tmp-cb_CurrentPrice.csv")):
         os.remove("tmp-cb_CurrentPrice.csv")
 
@@ -52,153 +51,135 @@ def cleanup():
 #####################
 
 
-################################
-###### BEGIN NAMES&PRICES ######
-################################
+#######################
+###### BEGIN RUN ######
+#######################
 
-# connect to coinbase and cmc 
-# make dataframes
-
-# creates four output files
-# temporary files, new versions on each run
-#   tmp-cb_CurrentPrice.csv -> name,price
-#   tmp-cb_TradeData.txt -> all dataframes printed, 70000+ lines
-#   tmp-cmc_LatestQuotes.csv -> cmc snapshot output
-#   tmp-the_Wire.txt -> debug output file
-# input file
-#   inp-cmc_id.csv -> name,cmcid,experimental asset bool
-
-def namesPrices():
-
-    # OUTPUT files
-    cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
+def run():
+    
+    # temp files
+    # cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
     wirefile = open("tmp-the_Wire.txt", "w") # what's happeninng
-    wirefile.write("Get trade data from coinbase -> \n")
-    tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe
+    # tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe
 
-    # create dictionary
+    # read from file to create dictionary { name : cmcid }
     with open('inp-cmc_id.csv', mode='r') as infile:
         reader = csv.reader(infile)
         mydict = dict((rows[0],rows[1]) for rows in reader)
 
-    # OUTPUT console key-value pairs
+    # OUTPUT key-value pairs
+    wirefile.write("Dictionary\n")
     wirefile.write(str(mydict))
+    wirefile.write("\n")
 
-    # initialize next wallet id and declare empty lists
-    next = None
+    next = None # variables
     names = []
-    order = []
+    numbers = []
+    cmcOrder = []
 
-    # coinbase loop
+    wirefile.write("Print names\n") # OUTPUT
+
     # runs until the next_uri parameter is none
     while True:
         accounts = client.get_accounts(starting_after = next)
         next = accounts.pagination.next_starting_after
-        
+
         # iterate each wallet name
         for wallet in accounts.data:        
             
             # change crypto name to cbpro historic rates product ticker name
-            tempStr = wallet['name']
-            tempStr = tempStr.replace(" Wallet", "")
-            tempStr = tempStr + "-USD" 
+            nameStr = wallet['name']
+            nameStr = nameStr.replace(" Wallet", "")
+            nameStr = nameStr + "-USD" 
 
-            # filter out staked, delisted, stable, etc. 
-            #   6/11/23 -> don't forget to integrate experimental asset bool somehow
-            #     IDEA -> move all the dataframe activity outside of this statement
-            #               with almost two minute runtime before any technical analysis 
-            #               indicators or machine learning means this needs streamlining
-            #               like only runs dataframes when necessary 
             # if program errors out, the cause is likely here
-            # example scenario -> cb adds a new staked wallet, 
-            #                     no price data to pull,
-            #                     error at raw.reverse()
-            #                     print(tempStr) to debug               
-            if tempStr not in "Staked SOL-USD" and tempStr not in "Staked ATOM-USD" and tempStr not in "Staked XTZ-USD" and tempStr not in "Staked ADA-USD" and tempStr not in "ETH2-USD" and tempStr not in "REPV2-USD" and tempStr not in "USDC-USD" and tempStr not in "Cash (USD)-USD" and tempStr not in "GNT-USD" and tempStr not in "RGT-USD" and tempStr not in "TRIBE-USD" and tempStr not in "UST-USD" and tempStr not in "WLUNA-USD" and tempStr not in "MUSD-USD" and tempStr not in "UPI-USD" and tempStr not in "RGT-USD" and tempStr not in "XRP-USD" and tempStr not in "USDT-USD" and tempStr not in "DAI-USD" and tempStr not in "BUSD-USD" and tempStr not in "GUSD-USD" and tempStr not in "RLY-USD" and tempStr not in "KEEP-USD" and tempStr not in "NU-USD" and tempStr not in "MIR-USD" and tempStr not in "OMG-USD" and tempStr not in "REP-USD" and tempStr not in "LOOM-USD" and tempStr not in "YFII-USD" and tempStr not in "GALA-USD" and tempStr not in "STG-USD" and tempStr not in "PAX-USD":
+            # filter out staked, delisted, stable, etc.               
+            exclude = ["Staked SOL-USD","Staked ATOM-USD","Staked XTZ-USD","Staked ADA-USD","ETH2-USD","REPV2-USD","USDC-USD","Cash (USD)-USD","GNT-USD","RGT-USD","TRIBE-USD","UST-USD","WLUNA-USD","MUSD-USD","UPI-USD","RGT-USD","XRP-USD","USDT-USD","DAI-USD","BUSD-USD","GUSD-USD","RLY-USD","KEEP-USD","NU-USD","MIR-USD","OMG-USD","REP-USD","LOOM-USD","YFII-USD","GALA-USD","STG-USD","PAX-USD"]
+            
+            if nameStr not in exclude:    
                 
-                # add to list
-                names.append(tempStr)
+                names.append(nameStr) # add to list
+                nameStr = nameStr.replace("-USD","") # remove -USD
+                numbers.append(mydict.get(nameStr)) # save to numbers ordered list    
+                wirefile.write("  " + nameStr) # OUTPUT
 
-                # pull historic rates for crypto: 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
-                # get historic rates function returns 300 rows
-                # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
-                # this program focuses on short term data
+                # means info must be added to inp-cmc_id.csv
+                if nameStr not in mydict:
+                    wirefile.write("  <-- New")
 
-                # snapshot of local trading data
-                # now minus 5 hours -> from cb perspective
-                # date, open, high, low, close, volume
-                raw = cbp.get_product_historic_rates(product_id = tempStr, granularity = 60)
-                
-                # put in chronological order
-                raw.reverse()
-
-                # pause so cbpro calls don't error out
-                # sometimes required on high performance environments
-                # time.sleep(0.10)
-                
-                # send to pandas dataframe
-                df = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
-
-                # convert date to readable format
-                df['Date'] = pd.to_datetime(df['Date'].astype(str), unit='s')
-
-                # last price
-                current = df["Close"].iloc[-1]
-                current = float(current)
-
-                # remove -USD, order used for cmc snapshot 
-                tempStr = tempStr.replace("-USD","")
-                order.append(mydict.get(tempStr))
-
-                # OUTPUT
-                wirefile.write("    " + tempStr + "\n")             # tmp-the_Wire.txt         
-                cbfile.write(tempStr + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
-                tradefile.write("\n" + tempStr + "\n")              # tmp-cb_TradeData.txt
-                tradefile.write(str(df))
-                tradefile.write("\n\n")
+                # OUTPUT inside approved names loop                   
+                # cbfile.write(nameStr + "\n")# + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
+                # tradefile.write("\n" + nameStr + "\n")              # tmp-cb_TradeData.txt
+                # tradefile.write(nameStr + "\n")# str(df))
+                # tradefile.write("\n\n")
 
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
     
     # OUTSIDE loop activity starts here
-
-    # for id=
-    idBuild = ""
-    for i in order:
-        idBuild += i
+    
+    # get cmc data
+    idBuild = "" # string list all cmcid
+    for i in numbers:
+        idBuild += str(i)
         idBuild += ","
+    idBuild = idBuild[:-1] # remove last ',' char
+    # data_quote = cmc.cryptocurrency_quotes_latest(id=idBuild, convert='USD')
+    # df = pd.DataFrame.from_records(data_quote.data)
     
-    # remove last ',' char
-    idBuild = idBuild[:-1]
-    
-    # OUTPUT idBuild and order must match
+    # OUTPUT 
+    # df.to_csv("tmp-cmc_LatestQuotes.csv")
+    wirefile.write("\n") # idBuild and numbers must match
+    wirefile.write("String input to cmc api latest quotes\n")
     wirefile.write(idBuild + "\n")
-    wirefile.write(str(order))
+    wirefile.write("List\n")
+    wirefile.write(str(numbers))
     wirefile.write("\n")
 
-    # pull information from cmc
-    # snapshot of global trading data
-    # not unlimited amount of api calls  
-    # id="1,2" are bitcoin and litecoin for example
-    #   need to retrieve one data point, like percent_change_1h
-    data_quote = cmc.cryptocurrency_quotes_latest(id=idBuild, convert='USD')
-    df = pd.DataFrame.from_records(data_quote.data)
-    df.to_csv("tmp-cmc_LatestQuotes.csv") # OUTPUT
-    
-    # two data sources achieved
-    # the above works but the id order output doesn't match the input
-    #   much text parsing required
-    #   possible pattern, row 14, number of "}}" matches number cryptos
-
     # end files
-    cbfile.close() 
+    # cbfile.close() 
     wirefile.close()
-    tradefile.close() 
+    # tradefile.close() 
 
-################################
-######  END NAMES&PRICES  ######
-################################
+#########################
+######   END RUN   ######
+#########################
+
+
+#######################
+### BEGIN DATAFRAME ###
+#######################
+
+                # correct number of tabs applied if want to run once for every crypto
+                # historic rates 
+                # 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
+                # returns 300 rows
+                # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
+
+                # get cb data
+                # raw = cbp.get_product_historic_rates(product_id = nameStr, granularity = 60)
+                
+                # put in chronological order
+                # raw.reverse()
+
+                # pause so cbpro calls don't error out
+                # sometimes required on high performance environments
+                # time.sleep(0.10)
+                
+                # send to pandas dataframe
+                # df = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
+
+                # convert date from unix timestamp to readable format
+                # df['Date'] = pd.to_datetime(df['Date'].astype(str), unit='s')
+
+                # save most recent price
+                # current = df["Close"].iloc[-1]
+                # current = float(current)
+
+#######################
+###  END DATAFRAME  ###
+#######################
 
 
 ######################
@@ -216,7 +197,7 @@ def namesPrices():
 
 # set schedule
 # schedule.every().minute.at(":00").do(run) # every minute at 00 seconds
-# schedule.every().hour.at(":42").do(run) # every hour at 42 minutes
+# schedule.every().hour.at(":00").do(run) # every hour at 00 minutes
 
 # void main
 
@@ -230,18 +211,87 @@ def namesPrices():
 ######################
 
 
+###################
+### BEGIN OTHER ###
+###################
+
+def other():
+
+    cmcOrder = [] # variables 
+    data = []
+    num = ""
+    dataStr = ""
+    temp = ""
+
+    # read from file to create dictionary { name : cmcid }
+    with open('inp-cmc_id.csv', mode='r') as infile:
+        reader = csv.reader(infile)
+        mydict = dict((rows[0],rows[1]) for rows in reader)
+
+    # this file is cmc output example
+    with open('parseMe.csv', mode='r') as fp:
+        for i, line in enumerate(fp):
+            line = line[:-1] # remove newline
+            
+            if i == 0: # first line, determine cmcid order
+                for char in reversed(line): # reverse iterate
+                    if char == ",":
+                        num = num.replace(",", "")
+                        cmcOrder.insert(0, num[::-1]) # insert front, num reverse order
+                        num = "" # reset num
+                    num += char
+                
+                print(len(cmcOrder)) # OUTPUT
+                print(cmcOrder)
+
+            elif i == 13: # 14th line, save bulk data
+                
+                start = len(line) - 4 # ignore the first }}
+                
+                for i in range(start, 0, -1): # splice rows
+                    if line[i] == "}" and line[i-1] == "}": 
+                        data.insert(0, dataStr[::-1]) 
+                        dataStr = ""
+                    dataStr += line[i]
+                data.insert(0, dataStr[::-1]) # don't forget first value, added last
+
+                print(len(data)) # OUTPUT
+                print(data[0]) # print first, middle and last examples
+                print("")
+                print(data[133])
+                print("")
+                print(data[len(data)-1])
+    
+    # splice column value
+    for index, lineStr in enumerate(data):
+        count = 0
+        for c in lineStr:
+            if c == "'":
+                count += 1
+            
+            if count == 30: # percent_change_1hr 
+                if c.isdigit() or c == "-" or c == ".":
+                    temp += c 
+        
+        # OUTPUT extract value
+        print(([k for k, v in mydict.items() if v == str(cmcOrder[index])][0]) + " percent_change_1hr -> " + temp)
+        temp = ""
+
+###################
+###  END OTHER  ###
+###################
+
+
 #################
 ### VOID MAIN ###
 #################
 
-# run once, no schedule
-cleanup()
-namesPrices()
+# run once
+# cleanup()
+# run()
+other()
 
 # OUTPUT console rutime
-# avg 1.6 min
-# lubuntu linux on toshiba satellite l755d
-# vscode and python 2.7.18
 end_time = time.time()
 print("--- %s seconds ---" % (end_time - start_time))
 print("--- %s minutes ---" % ((end_time - start_time) / 60))
