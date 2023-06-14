@@ -8,6 +8,7 @@ import coinmarketcapapi
 import pandas as pd                         
 import os
 import csv
+import numpy as np
 
 start_time = time.time() # start timer
 
@@ -29,55 +30,37 @@ pd.set_option('display.max_columns', 50)
 # pd.set_option('display.max_colwidth', None)
 
 
-#####################
-### BEGIN CLEANUP ###
-#####################
-
-def cleanup(): # remove temp files from previous runs
-    if (os.path.exists("tmp-cb_CurrentPrice.csv")):
-        os.remove("tmp-cb_CurrentPrice.csv")
-
-    if (os.path.exists("tmp-cmc_LatestQuotes.csv")):
-        os.remove("tmp-cmc_LatestQuotes.csv")
-
-    if (os.path.exists("tmp-the_Wire.txt")):
-        os.remove("tmp-the_Wire.txt")
-
-    if (os.path.exists("tmp-cb_TradeData.txt")):
-        os.remove("tmp-cb_TradeData.txt")
-
-#####################
-###  END CLEANUP  ###
-#####################
-
-
 #######################
 ###### BEGIN RUN ######
 #######################
 
 def run():
     
-    # temp files
-    # cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
-    wirefile = open("tmp-the_Wire.txt", "w") # what's happeninng
-    # tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe
+    # remove temp files from previous runs
+    if (os.path.exists("tmp-cb_CurrentPrice.csv")):
+        os.remove("tmp-cb_CurrentPrice.csv")
+    if (os.path.exists("tmp-cmc_LatestQuotes.csv")):
+        os.remove("tmp-cmc_LatestQuotes.csv")
+    if (os.path.exists("tmp-the_Wire.csv")):
+        os.remove("tmp-the_Wire.csv")
+    if (os.path.exists("tmp-cb_TradeData.txt")):
+        os.remove("tmp-cb_TradeData.txt")
+
+    # create temp files
+    cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
+    wirefile = open("tmp-the_Wire.csv", "w") # name,%change_1hr
+    tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe outputs
 
     # read from file to create dictionary { name : cmcid }
-    with open('inp-cmc_id.csv', mode='r') as infile:
+    with open("inp-cmc_id.csv", mode="r") as infile:
         reader = csv.reader(infile)
-        mydict = dict((rows[0],rows[1]) for rows in reader)
-
-    # OUTPUT key-value pairs
-    wirefile.write("Dictionary\n")
-    wirefile.write(str(mydict))
-    wirefile.write("\n")
+        mydict = dict((rows[0], rows[1]) for rows in reader) # cmcid : name
+    mydict_swap = {v: k for k, v in mydict.items()}
 
     next = None # variables
     names = []
     numbers = []
     cmcOrder = []
-
-    wirefile.write("Print names\n") # OUTPUT
 
     # runs until the next_uri parameter is none
     while True:
@@ -101,46 +84,159 @@ def run():
                 names.append(nameStr) # add to list
                 nameStr = nameStr.replace("-USD","") # remove -USD
                 numbers.append(mydict.get(nameStr)) # save to numbers ordered list    
-                wirefile.write("  " + nameStr) # OUTPUT
-
+                
                 # means info must be added to inp-cmc_id.csv
+                # print(nameStr) # debug if new crypto
                 if nameStr not in mydict:
-                    wirefile.write("  <-- New")
-
-                # OUTPUT inside approved names loop                   
-                # cbfile.write(nameStr + "\n")# + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
-                # tradefile.write("\n" + nameStr + "\n")              # tmp-cb_TradeData.txt
-                # tradefile.write(nameStr + "\n")# str(df))
-                # tradefile.write("\n\n")
+                    print("New Crypto")
+                    wirefile.write("New Crypto\n")
 
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
-    
+
     # OUTSIDE loop activity starts here
-    
-    # get cmc data
-    idBuild = "" # string list all cmcid
+    cmcOrder = [] # cmc variables 
+    data = []
+    num = ""
+    dataStr = ""
+    temp = ""
+
+    # make string list all cmc ids
+    idBuild = ""
     for i in numbers:
         idBuild += str(i)
         idBuild += ","
     idBuild = idBuild[:-1] # remove last ',' char
-    # data_quote = cmc.cryptocurrency_quotes_latest(id=idBuild, convert='USD')
-    # df = pd.DataFrame.from_records(data_quote.data)
+    data_quote = cmc.cryptocurrency_quotes_latest(id=idBuild, convert='USD')
+    df = pd.DataFrame.from_records(data_quote.data)
+    df.to_csv("tmp-cmc_LatestQuotes.csv") # OUTPUT to file
     
-    # OUTPUT 
-    # df.to_csv("tmp-cmc_LatestQuotes.csv")
-    wirefile.write("\n") # idBuild and numbers must match
-    wirefile.write("String input to cmc api latest quotes\n")
-    wirefile.write(idBuild + "\n")
-    wirefile.write("List\n")
-    wirefile.write(str(numbers))
-    wirefile.write("\n")
+    with open("tmp-cmc_LatestQuotes.csv", mode='r') as fp: # read from cmc file
+        for i, line in enumerate(fp):
+            line = line[:-1] # remove newline
+            
+            if i == 0: # first line, determine cmcid order
+                for char in reversed(line): # reverse iterate
+                    if char == ",":
+                        num = num.replace(",", "")
+                        cmcOrder.insert(0, num[::-1]) # insert front, num reverse order
+                        num = "" # reset num
+                    num += char
+                
+                # for debug
+                # wirefile.write(str((len(cmcOrder))) + "\n") # OUTPUT
+                # wirefile.write(str(cmcOrder) + "\n")
+
+            elif i == 13: # 14th line, save bulk data
+                start = len(line) - 4 # ignore the first }}
+                
+                for i in range(start, 0, -1): # splice rows
+                    if line[i] == "}" and line[i-1] == "}": 
+                        data.insert(0, dataStr[::-1]) 
+                        dataStr = ""
+                    dataStr += line[i]
+                data.insert(0, dataStr[::-1]) # don't forget first value, added last
+              
+                # for debug
+                # wirefile.write("\n")
+                # wirefile.write(str((len(data))) + "\n") 
+                # wirefile.write(str(data[0]) + "\n")  # print first and last examples            
+                # wirefile.write(str(data[len(data) - 1]) + "\n")
+
+    # splice column value
+    matrix = [[]]
+    for index, lineStr in enumerate(data):
+        count = 0
+        for c in lineStr:
+            if c == "'":
+                count += 1
+
+            if count == 30: # percent_change_1hr 
+                if c.isdigit() or c == "-" or c == ".":
+                    temp += c 
+        
+        # OUTPUT
+        builder1 = mydict_swap.get(cmcOrder[index])
+        builder2 = temp
+        matrix.append((builder1,builder2))
+        temp = "" # reset
+
+    # determine top 10 1hr%change performers
+    df = pd.DataFrame(matrix, columns =['name','percent_change_1hr'])
+    df = df.sort_values('percent_change_1hr', ascending=False)
+    df = df[:-1] # drop last row
+    
+    # OUTPUT
+    print(df)
+    result = df.head(10)
+    print(result)
+    
+    # add names to top10 list
+    strBuild = ""
+    top10 = []
+    orderedPrice = [] 
+    for i in range(0,10):
+        strBuild = str(result['name'].iloc[i])
+        top10.append(strBuild +"-USD") 
+        orderedPrice.append(float(result['percent_change_1hr'].iloc[-1]))
+    print(orderedPrice)
+
+    # machine learning happens here
+    wirefile.write("name,price,volatility\n")
+    print(top10) # this will go to cb historical data
+    for i, line in enumerate(top10):
+        # correct number of tabs applied if want to run once for every crypto
+        # historic rates 
+        # 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
+        # returns 300 rows
+        # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
+
+        # get cb data
+        raw = cbp.get_product_historic_rates(product_id = line, granularity = 60)
+        
+        # change line
+        line = line.replace("-USD","")
+
+        # put in chronological order
+        raw.reverse()
+
+        # pause so cbpro calls don't error out
+        # sometimes required on high performance environments
+        # time.sleep(0.10)
+        
+        # send to pandas dataframe
+        dataFrame = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
+
+        # convert date from unix timestamp to readable format
+        dataFrame['Date'] = pd.to_datetime(dataFrame['Date'].astype(str), unit='s')
+
+        # save most recent price
+        current = dataFrame["Close"].iloc[-1]
+        current = float(current)
+
+        # insert log return column to dataFrame, needed for volatility
+        dataFrame.insert(6, "Log Return", np.log(dataFrame['Close']/dataFrame['Close'].shift()))
+        
+        # calculate volatility
+        volatility = (dataFrame['Log Return'].std()*252**.5)*100
+        volatility = round(volatility, 2)
+        print(volatility)
+
+        # output last values to the wire
+        wirefile.write(line + "," + str(current) + "," + str(volatility) + "\n")
+
+        # OUTPUT
+        tradefile.write("\n" + line + "\n")              # tmp-cb_TradeData.txt
+        tradefile.write(str(dataFrame) + "\n")
+        tradefile.write("\n\n")
+        # cbfile.write(line + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
+        #   this only outputs the top 10    
 
     # end files
-    # cbfile.close() 
+    cbfile.close() 
     wirefile.close()
-    # tradefile.close() 
+    tradefile.close() 
 
 #########################
 ######   END RUN   ######
@@ -176,6 +272,10 @@ def run():
                 # save most recent price
                 # current = df["Close"].iloc[-1]
                 # current = float(current)
+
+                # tradefile.write("\n" + nameStr + "\n")              # tmp-cb_TradeData.txt
+                # tradefile.write(nameStr + "\n")# str(df))
+                # tradefile.write("\n\n")
 
 #######################
 ###  END DATAFRAME  ###
@@ -216,66 +316,7 @@ def run():
 ###################
 
 def other():
-
-    cmcOrder = [] # variables 
-    data = []
-    num = ""
-    dataStr = ""
-    temp = ""
-
-    # read from file to create dictionary { name : cmcid }
-    with open('inp-cmc_id.csv', mode='r') as infile:
-        reader = csv.reader(infile)
-        mydict = dict((rows[0],rows[1]) for rows in reader)
-
-    # this file is cmc output example
-    with open('parseMe.csv', mode='r') as fp:
-        for i, line in enumerate(fp):
-            line = line[:-1] # remove newline
-            
-            if i == 0: # first line, determine cmcid order
-                for char in reversed(line): # reverse iterate
-                    if char == ",":
-                        num = num.replace(",", "")
-                        cmcOrder.insert(0, num[::-1]) # insert front, num reverse order
-                        num = "" # reset num
-                    num += char
-                
-                print(len(cmcOrder)) # OUTPUT
-                print(cmcOrder)
-
-            elif i == 13: # 14th line, save bulk data
-                
-                start = len(line) - 4 # ignore the first }}
-                
-                for i in range(start, 0, -1): # splice rows
-                    if line[i] == "}" and line[i-1] == "}": 
-                        data.insert(0, dataStr[::-1]) 
-                        dataStr = ""
-                    dataStr += line[i]
-                data.insert(0, dataStr[::-1]) # don't forget first value, added last
-
-                print(len(data)) # OUTPUT
-                print(data[0]) # print first, middle and last examples
-                print("")
-                print(data[133])
-                print("")
-                print(data[len(data)-1])
-    
-    # splice column value
-    for index, lineStr in enumerate(data):
-        count = 0
-        for c in lineStr:
-            if c == "'":
-                count += 1
-            
-            if count == 30: # percent_change_1hr 
-                if c.isdigit() or c == "-" or c == ".":
-                    temp += c 
-        
-        # OUTPUT extract value
-        print(([k for k, v in mydict.items() if v == str(cmcOrder[index])][0]) + " percent_change_1hr -> " + temp)
-        temp = ""
+    print("other()")
 
 ###################
 ###  END OTHER  ###
@@ -287,9 +328,8 @@ def other():
 #################
 
 # run once
-# cleanup()
-# run()
-other()
+run()
+# other()
 
 # OUTPUT console rutime
 end_time = time.time()
