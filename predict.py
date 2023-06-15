@@ -1,3 +1,15 @@
+# what I think is happening here
+#   script runs on a schedule, every hour, 10 rows of data added to db every hour
+#   db holds the ta indicators based on granular cbpro trading data
+#   the database is filled with the top performers in %change_1hr no matter what the market is doing
+#  
+#   get list of coinbase cryptos from cb api -> cmc data identify top 10 cryptos %change_1hr -> 
+#   pull short term data from cbpro -> make technical analysis indicators -> predict future values ->
+#   send all that information to database -> db to decision tree -> isolate the multiple pathways ->
+#   predict future cryptos based on tree pathways findings
+# this script is supposed to be lean, simple and optimized for limited environments
+#      
+#   
 # imports
 import datetime
 import schedule                             
@@ -50,6 +62,7 @@ def run():
     cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
     wirefile = open("tmp-the_Wire.csv", "w") # name,%change_1hr
     tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe outputs
+    wirefile.write("name,price,volatility,rsi\n")
 
     # read from file to create dictionary { name : cmcid }
     with open("inp-cmc_id.csv", mode="r") as infile:
@@ -82,15 +95,69 @@ def run():
             if nameStr not in exclude:    
                 
                 names.append(nameStr) # add to list
-                nameStr = nameStr.replace("-USD","") # remove -USD
-                numbers.append(mydict.get(nameStr)) # save to numbers ordered list    
-                
+                    
+                # -USD issue
                 # means info must be added to inp-cmc_id.csv
                 # print(nameStr) # debug if new crypto
-                if nameStr not in mydict:
-                    print("New Crypto")
-                    wirefile.write("New Crypto\n")
+                # if nameStr not in mydict:
+                #    print("New Crypto")
+                #    wirefile.write("New Crypto\n")
 
+                # build dataframe
+                # 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
+                # returns 300 rows
+                # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
+
+                # get cb data
+                raw = cbp.get_product_historic_rates(product_id = nameStr, granularity = 60)
+                
+                nameStr = nameStr.replace("-USD","") # remove -USD
+                numbers.append(mydict.get(nameStr)) # save to numbers ordered list
+                
+                # put in chronological order
+                raw.reverse()
+
+                # pause so cbpro calls don't error out
+                # sometimes required on high performance environments
+                # time.sleep(0.10)
+                
+                # send to pandas dataframe
+                dataFrame = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
+
+                # convert date from unix timestamp to readable format
+                dataFrame['Date'] = pd.to_datetime(dataFrame['Date'].astype(str), unit='s')
+
+                # save most recent price
+                currentPrice = dataFrame["Close"].iloc[-1]
+
+                ### BEGIN RSI ###
+                close_delta = dataFrame['Close'].diff()
+
+                # Make two series: one for lower closes and one for higher closes
+                up = close_delta.clip(lower=0)
+                down = -1 * close_delta.clip(upper=0)
+                
+                # Use simple moving average
+                ma_up = up.rolling(window = 14).mean()
+                ma_down = down.rolling(window = 14).mean()
+                    
+                rsi = ma_up / ma_down
+                rsi = 100 - (100/(1 + rsi))
+                ###  END RSI  ###
+                
+                # insert log return column to dataFrame, needed for volatility
+                dataFrame.insert(6, "Log Return", np.log(dataFrame['Close']/dataFrame['Close'].shift()))
+                dataFrame.insert(7, "RSI", rsi)
+
+                # calculate
+                volatilityOut = (dataFrame['Log Return'].std()*252**.5)*100
+                volatilityOut = round(volatilityOut, 2)
+                rsiOut = dataFrame['RSI'].iloc[-1]
+                rsiOut = round(rsiOut, 2)
+
+                # output to the wire
+                wirefile.write(nameStr + "," + str(currentPrice) + "," + str(volatilityOut) + "," + str(rsiOut) + "\n")
+        
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
@@ -166,72 +233,22 @@ def run():
     df = pd.DataFrame(matrix, columns =['name','percent_change_1hr'])
     df = df.sort_values('percent_change_1hr', ascending=False)
     df = df[:-1] # drop last row
-    
-    # OUTPUT
     print(df)
-    result = df.head(10)
-    print(result)
+    result = df.head(10) # save top 10
     
     # add names to top10 list
     strBuild = ""
     top10 = []
     orderedPrice = [] 
-    for i in range(0,10):
-        strBuild = str(result['name'].iloc[i])
-        top10.append(strBuild +"-USD") 
-        orderedPrice.append(float(result['percent_change_1hr'].iloc[-1]))
+    for index, row in result.iterrows():
+        strBuild = str(row['name'])
+        top10.append(strBuild) 
+        oneHrChange = float(row['percent_change_1hr'])
+        oneHrChange = round(oneHrChange, 2)
+        orderedPrice.append(oneHrChange)
+    
+    print(top10)
     print(orderedPrice)
-
-    # machine learning happens here
-    wirefile.write("name,price,volatility\n")
-    print(top10) # this will go to cb historical data
-    for i, line in enumerate(top10):
-        # correct number of tabs applied if want to run once for every crypto
-        # historic rates 
-        # 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
-        # returns 300 rows
-        # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
-
-        # get cb data
-        raw = cbp.get_product_historic_rates(product_id = line, granularity = 60)
-        
-        # change line
-        line = line.replace("-USD","")
-
-        # put in chronological order
-        raw.reverse()
-
-        # pause so cbpro calls don't error out
-        # sometimes required on high performance environments
-        # time.sleep(0.10)
-        
-        # send to pandas dataframe
-        dataFrame = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
-
-        # convert date from unix timestamp to readable format
-        dataFrame['Date'] = pd.to_datetime(dataFrame['Date'].astype(str), unit='s')
-
-        # save most recent price
-        current = dataFrame["Close"].iloc[-1]
-        current = float(current)
-
-        # insert log return column to dataFrame, needed for volatility
-        dataFrame.insert(6, "Log Return", np.log(dataFrame['Close']/dataFrame['Close'].shift()))
-        
-        # calculate volatility
-        volatility = (dataFrame['Log Return'].std()*252**.5)*100
-        volatility = round(volatility, 2)
-        print(volatility)
-
-        # output last values to the wire
-        wirefile.write(line + "," + str(current) + "," + str(volatility) + "\n")
-
-        # OUTPUT
-        tradefile.write("\n" + line + "\n")              # tmp-cb_TradeData.txt
-        tradefile.write(str(dataFrame) + "\n")
-        tradefile.write("\n\n")
-        # cbfile.write(line + "," + str(current) + "\n")   # tmp-cb_CurrentPrice.csv
-        #   this only outputs the top 10    
 
     # end files
     cbfile.close() 
@@ -241,45 +258,6 @@ def run():
 #########################
 ######   END RUN   ######
 #########################
-
-
-#######################
-### BEGIN DATAFRAME ###
-#######################
-
-                # correct number of tabs applied if want to run once for every crypto
-                # historic rates 
-                # 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
-                # returns 300 rows
-                # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
-
-                # get cb data
-                # raw = cbp.get_product_historic_rates(product_id = nameStr, granularity = 60)
-                
-                # put in chronological order
-                # raw.reverse()
-
-                # pause so cbpro calls don't error out
-                # sometimes required on high performance environments
-                # time.sleep(0.10)
-                
-                # send to pandas dataframe
-                # df = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
-
-                # convert date from unix timestamp to readable format
-                # df['Date'] = pd.to_datetime(df['Date'].astype(str), unit='s')
-
-                # save most recent price
-                # current = df["Close"].iloc[-1]
-                # current = float(current)
-
-                # tradefile.write("\n" + nameStr + "\n")              # tmp-cb_TradeData.txt
-                # tradefile.write(nameStr + "\n")# str(df))
-                # tradefile.write("\n\n")
-
-#######################
-###  END DATAFRAME  ###
-#######################
 
 
 ######################
@@ -311,25 +289,12 @@ def run():
 ######################
 
 
-###################
-### BEGIN OTHER ###
-###################
-
-def other():
-    print("other()")
-
-###################
-###  END OTHER  ###
-###################
-
-
 #################
 ### VOID MAIN ###
 #################
 
 # run once
 run()
-# other()
 
 # OUTPUT console rutime
 end_time = time.time()
