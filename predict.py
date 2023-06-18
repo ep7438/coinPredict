@@ -1,15 +1,3 @@
-# what I think is happening here
-#   script runs on a schedule, every hour, 10 rows of data added to db every hour
-#   db holds the ta indicators based on granular cbpro trading data
-#   the database is filled with the top performers in %change_1hr no matter what the market is doing
-#  
-#   get list of coinbase cryptos from cb api -> cmc data identify top 10 cryptos %change_1hr -> 
-#   pull short term data from cbpro -> make technical analysis indicators -> predict future values ->
-#   send all that information to database -> db to decision tree -> isolate the multiple pathways ->
-#   predict future cryptos based on tree pathways findings
-# this script is supposed to be lean, simple and optimized for limited environments
-#      
-#   
 # imports
 import datetime
 import schedule                             
@@ -22,24 +10,20 @@ import os
 import csv
 import numpy as np
 
+counter = 0 # num iterations
 start_time = time.time() # start timer
+    # timer needs to be inside run() for schedule mode
 
 # connect to cb, cmc
 # api.dat stores cb api key with wallet:accounts:read permission
-# on first two lines and cmc api key on third
+#   on first two lines and cmc api key on third
 # required to execute script 
 handshake = open('api.dat', 'r').read().splitlines()
 client = Client(handshake[0], handshake[1])
 cmc = coinmarketcapapi.CoinMarketCapAPI(handshake[2])
-
-# for cb trading data
-cbp = cbpro.PublicClient() 
-
-# pandas toggle all data
-pd.set_option('display.max_rows', 500)
-pd.set_option('display.max_columns', 50)
-# pd.set_option('display.width', None) # None errors out in python 2.7.18
-# pd.set_option('display.max_colwidth', None)
+cbp = cbpro.PublicClient() # for granular trading data
+pd.set_option('display.max_rows', 500) # pandas toggle all data
+pd.set_option('display.max_columns', 50)    
 
 
 #######################
@@ -47,33 +31,38 @@ pd.set_option('display.max_columns', 50)
 #######################
 
 def run():
-    
+    global counter # necessary for schedule mode
+    counter += 1
+    print("") # OUTPUT CONSOLE
+    print(str(counter)) 
+
     # remove temp files from previous runs
+    # perhaps keep them, ie separate folder & timestamp names 
     if (os.path.exists("tmp-cb_CurrentPrice.csv")):
         os.remove("tmp-cb_CurrentPrice.csv")
     if (os.path.exists("tmp-cmc_LatestQuotes.csv")):
         os.remove("tmp-cmc_LatestQuotes.csv")
     if (os.path.exists("tmp-the_Wire.csv")):
         os.remove("tmp-the_Wire.csv")
-    if (os.path.exists("tmp-cb_TradeData.txt")):
-        os.remove("tmp-cb_TradeData.txt")
+    if (os.path.exists("tmp-cmc_Data.csv")):
+        os.remove("tmp-cmc_Data.csv")
+    
+    cmcfile = open("tmp-cmc_Data.csv", "w") # data from cmc
+    wirefile = open("tmp-the_Wire.csv", "w") # data from cb
+    wirefile.write("name,price,volatility,rsi\n") # columns
+    outfile = open("output.csv", "a") # final output, append because it is not temporary
 
-    # create temp files
-    cbfile = open("tmp-cb_CurrentPrice.csv", "w") # name,price
-    wirefile = open("tmp-the_Wire.csv", "w") # name,%change_1hr
-    tradefile = open("tmp-cb_TradeData.txt", "w") # dataframe outputs
-    wirefile.write("name,price,volatility,rsi\n")
-
-    # read from file to create dictionary { name : cmcid }
+    # read from input file to create dictionary { name : cmcid }
     with open("inp-cmc_id.csv", mode="r") as infile:
         reader = csv.reader(infile)
-        mydict = dict((rows[0], rows[1]) for rows in reader) # cmcid : name
-    mydict_swap = {v: k for k, v in mydict.items()}
+        mydict = dict((rows[0], rows[1]) for rows in reader) 
+    mydict_swap = {v: k for k, v in mydict.items()} # reverse -> { cmcid : name }
 
     next = None # variables
     names = []
     numbers = []
     cmcOrder = []
+    cbDict = {}
 
     # runs until the next_uri parameter is none
     while True:
@@ -94,25 +83,20 @@ def run():
             
             if nameStr not in exclude:    
                 
-                names.append(nameStr) # add to list
-                    
-                # -USD issue
                 # means info must be added to inp-cmc_id.csv
-                # print(nameStr) # debug if new crypto
-                # if nameStr not in mydict:
-                #    print("New Crypto")
-                #    wirefile.write("New Crypto\n")
-
-                # build dataframe
+                if nameStr.replace("-USD","") not in mydict:
+                    print(nameStr)
+                    print("New Crypto")
+                
+                names.append(nameStr) # add to list
+                
                 # 86400 = 1 day, 3600 = 1 hour, 900 = 15 min, 300 = 5 min, 60 = 1 min
                 # returns 300 rows
                 # 86400 = 300 days, 3600 = 12.5 days, 900 = 3.125 days, 300 = 1.04 days, 60 = 5 hours
-
-                # get cb data
                 raw = cbp.get_product_historic_rates(product_id = nameStr, granularity = 60)
                 
                 nameStr = nameStr.replace("-USD","") # remove -USD
-                numbers.append(mydict.get(nameStr)) # save to numbers ordered list
+                numbers.append(mydict.get(nameStr)) # save to ordered list
                 
                 # put in chronological order
                 raw.reverse()
@@ -144,7 +128,7 @@ def run():
                 rsi = ma_up / ma_down
                 rsi = 100 - (100/(1 + rsi))
                 ###  END RSI  ###
-                
+
                 # insert log return column to dataFrame, needed for volatility
                 dataFrame.insert(6, "Log Return", np.log(dataFrame['Close']/dataFrame['Close'].shift()))
                 dataFrame.insert(7, "RSI", rsi)
@@ -152,22 +136,23 @@ def run():
                 # calculate
                 volatilityOut = (dataFrame['Log Return'].std()*252**.5)*100
                 volatilityOut = round(volatilityOut, 2)
-                rsiOut = dataFrame['RSI'].iloc[-1]
+                rsiOut = dataFrame['RSI'].iloc[-1] # pull last, most immediate rsi value
                 rsiOut = round(rsiOut, 2)
 
                 # output to the wire
                 wirefile.write(nameStr + "," + str(currentPrice) + "," + str(volatilityOut) + "," + str(rsiOut) + "\n")
-        
+                cbDict[nameStr] = str(currentPrice) + "," + str(volatilityOut) + "," + str(rsiOut)
+
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
 
-    # OUTSIDE loop activity starts here
-    cmcOrder = [] # cmc variables 
-    data = []
-    num = ""
-    dataStr = ""
-    temp = ""
+    ### BEGIN CMC ###
+    cmcOrder = [] # order of cryptos  
+    data = []       # for text parsing
+    num = ""        #
+    dataStr = ""    #
+    temp = ""       #
 
     # make string list all cmc ids
     idBuild = ""
@@ -187,32 +172,23 @@ def run():
                 for char in reversed(line): # reverse iterate
                     if char == ",":
                         num = num.replace(",", "")
-                        cmcOrder.insert(0, num[::-1]) # insert front, num reverse order
-                        num = "" # reset num
-                    num += char
+                        cmcOrder.insert(0, num[::-1]) # insert front, LIFO
+                        num = "" # reset val
+                    num += char            
                 
-                # for debug
-                # wirefile.write(str((len(cmcOrder))) + "\n") # OUTPUT
-                # wirefile.write(str(cmcOrder) + "\n")
-
             elif i == 13: # 14th line, save bulk data
                 start = len(line) - 4 # ignore the first }}
                 
-                for i in range(start, 0, -1): # splice rows
-                    if line[i] == "}" and line[i-1] == "}": 
-                        data.insert(0, dataStr[::-1]) 
-                        dataStr = ""
-                    dataStr += line[i]
+                for j in range(start, 0, -1): # splice rows
+                    if line[j] == "}" and line[j-1] == "}": 
+                        data.insert(0, dataStr[::-1]) # insert front
+                        dataStr = "" # reset val
+                    dataStr += line[j]
                 data.insert(0, dataStr[::-1]) # don't forget first value, added last
               
-                # for debug
-                # wirefile.write("\n")
-                # wirefile.write(str((len(data))) + "\n") 
-                # wirefile.write(str(data[0]) + "\n")  # print first and last examples            
-                # wirefile.write(str(data[len(data) - 1]) + "\n")
-
-    # splice column value
+    # splice column values
     matrix = [[]]
+    cmcDict = {}
     for index, lineStr in enumerate(data):
         count = 0
         for c in lineStr:
@@ -227,33 +203,37 @@ def run():
         builder1 = mydict_swap.get(cmcOrder[index])
         builder2 = temp
         matrix.append((builder1,builder2))
+        cmcfile.write(builder1 + "," + builder2 + "\n")
+        cmcDict[builder1] = builder2
         temp = "" # reset
 
     # determine top 10 1hr%change performers
     df = pd.DataFrame(matrix, columns =['name','percent_change_1hr'])
     df = df.sort_values('percent_change_1hr', ascending=False)
     df = df[:-1] # drop last row
-    print(df)
-    result = df.head(10) # save top 10
+    
+    # OUTPUT
+    result = df.head(10)
     
     # add names to top10 list
     strBuild = ""
     top10 = []
     orderedPrice = [] 
-    for index, row in result.iterrows():
-        strBuild = str(row['name'])
-        top10.append(strBuild) 
-        oneHrChange = float(row['percent_change_1hr'])
-        oneHrChange = round(oneHrChange, 2)
-        orderedPrice.append(oneHrChange)
-    
-    print(top10)
-    print(orderedPrice)
+    for i in range(0,10): # why 0-10?, this is weird but works, change iteration method
+        strBuild = str(result['name'].iloc[i])
+        top10.append(strBuild +"-USD") 
+        orderedPrice.append(float(result['percent_change_1hr'].iloc[i]))
+        outfile.write(strBuild + "," + str(cbDict.get(strBuild)) + "," + str(cmcDict.get(strBuild)) + "\n")
+    print(orderedPrice) # OUTPUT 
+    ### END CMC ###
+ 
+    wirefile.close() # end files
+    cmcfile.close()
+    outfile.close()
 
-    # end files
-    cbfile.close() 
-    wirefile.close()
-    tradefile.close() 
+    end_time = time.time() # OUTPUT console rutime
+    print("--- %s seconds ---" % (end_time - start_time))
+    print("--- %s minutes ---" % ((end_time - start_time) / 60))
 
 #########################
 ######   END RUN   ######
@@ -264,25 +244,16 @@ def run():
 ### BEGIN SCHEDULE ###
 ######################
 
-# this framework allows program to keep running
-# with scheduled function calls
-
-# def run():
-    # print current time
-    # current_time = datetime.datetime.now()
-    # formatted_time = current_time.strftime('%Y-%m-%d %H:%M:%S.%f')
-    # print(formatted_time[:-3])     
-
 # set schedule
 # schedule.every().minute.at(":00").do(run) # every minute at 00 seconds
-# schedule.every().hour.at(":00").do(run) # every hour at 00 minutes
+schedule.every().hour.at(":00").do(run) # every hour at 00 minutes
 
 # void main
 
 # keep running 
-# while True:
-    # schedule.run_pending()
-    # time.sleep(1) # pause one second
+while True:
+    schedule.run_pending()
+    time.sleep(1) # pause one second
 
 ######################
 ###  END SCHEDULE  ###
@@ -294,9 +265,44 @@ def run():
 #################
 
 # run once
-run()
+# run()
 
-# OUTPUT console rutime
-end_time = time.time()
-print("--- %s seconds ---" % (end_time - start_time))
-print("--- %s minutes ---" % ((end_time - start_time) / 60))
+'''
+BEGIN Fast stochastic calculation
+    %K = (Current Close - Lowest Low)/
+    (Highest High - Lowest Low) * 100
+    %D = 3-day SMA of %K
+
+    Slow stochastic calculation
+    %K = %D of fast stochastic
+    %D = 3-day SMA of %K
+
+    When %K crosses above %D, buy signal 
+    When the %K crosses below %D, sell signal
+    """
+
+    df = dataframe.copy()
+
+    # Set minimum low and maximum high of the k stoch
+    low_min  = df[low].rolling( window = k ).min()
+    high_max = df[high].rolling( window = k ).max()
+
+    # Fast Stochastic
+    df['k_fast'] = 100 * (df[close] - low_min)/(high_max - low_min)
+    df['k_fast'].ffill(inplace=True)
+    df['d_fast'] = df['k_fast'].rolling(window = d).mean()
+
+    # Slow Stochastic
+    df['k_slow'] = df["d_fast"]
+    df['d_slow'] = df['k_slow'].rolling(window = d).mean()
+
+    return df
+
+stochs = stochastics( df, 'Low', 'High', 'Close', 14, 3 )
+slow_k = stochs['k_slow'].values
+fast_k = stochs['k_fast'].values
+### END FAST STOCHASTIC CALCULATION
+
+# example cmc output
+# "{u'USD': {u'percent_change_60d': -46.9785509, u'market_cap_dominance': 0.0244, u'percent_change_7d': -17.47625752, u'price': 3.1982419442751278, u'volume_change_24h': 14.9018, u'percent_change_90d': -39.65488546, u'percent_change_24h': -7.39091959, u'tvl': 3323604703.28227, u'market_cap': 249490627.3795067, u'volume_24h': 6477255.6591379, u'percent_change_30d': -31.81212781, u'last_updated': u'2023-06-15T05:04:00.000Z', u'percent_change_1h': -0.03585149, u'fully_diluted_market_cap': 319824194.43}}"
+'''
