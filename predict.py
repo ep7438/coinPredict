@@ -1,6 +1,6 @@
 # imports
 import datetime
-import schedule                             
+# import schedule                             
 import time
 from coinbase.wallet.client import Client   
 import cbpro                                
@@ -9,10 +9,14 @@ import pandas as pd
 import os
 import csv
 import numpy as np
+import sklearn
+from sklearn.tree import DecisionTreeRegressor # Import Decision Tree Classifier
+from sklearn import tree
+from sklearn.model_selection import train_test_split
+from matplotlib import pyplot as plt
 
 counter = 0 # num iterations
-start_time = time.time() # start timer
-    # timer needs to be inside run() for schedule mode
+#print(MutableMapping)
 
 # connect to cb, cmc
 # api.dat stores cb api key with wallet:accounts:read permission
@@ -31,8 +35,9 @@ pd.set_option('display.max_columns', 50)
 #######################
 
 def run():
+    start_time = time.time() # start timer
+
     global counter # necessary for schedule mode
-    counter += 1
     print("") # OUTPUT CONSOLE
     print(str(counter)) 
 
@@ -195,6 +200,8 @@ def run():
             if c == "'":
                 count += 1
 
+            # DECIDE which values to utilize    
+
             if count == 30: # percent_change_1hr 
                 if c.isdigit() or c == "-" or c == ".":
                     temp += c 
@@ -241,19 +248,70 @@ def run():
 
 
 ######################
+### BEGIN CLASSIFY ###
+######################
+
+def classify():
+
+    #print('The scikit-learn version is {}.'.format(sklearn.__version__))
+
+    with open("inp-cmc_id.csv", mode="r") as infile:
+        reader = csv.reader(infile)
+        mydict = dict((rows[0], rows[1]) for rows in reader) 
+    mydict_swap = {v: k for k, v in mydict.items()} # reverse -> { cmcid : name }
+
+    with open("output.csv") as csv_file:
+        for row in csv.reader(csv_file, delimiter=','):
+            print(row[0])
+
+    df = pd.read_csv('output.csv')
+    # print(df.columns)
+    # print(df) 
+
+    # store x and y variables
+    # y is the class result, x for the other four
+    x = pd.DataFrame(df.drop(['percent_change_1hr'],axis=1))
+    y = pd.DataFrame(df['percent_change_1hr'])
+
+    # train test split
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.22, random_state=22, shuffle=True)
+
+    # do machine learning
+    regr = DecisionTreeRegressor(max_depth=4, random_state=2222)
+    model = regr.fit(x_train, y_train)
+    trScore = model.score(x_train, y_train)
+    print("\nDecision Tree Train Score ->")
+    print(trScore)
+
+    # print out text of tree path-
+    # tree_rules = export_text(model, feature_names=list(X_train.columns))
+    text_representation = tree.export_text(model, feature_names=list(x_train.columns))
+    print(text_representation)
+
+    # generate tree image
+    fig = plt.figure(figsize=(25,20))
+    _ = tree.plot_tree(model, feature_names=x.columns, class_names=y.columns, filled=True)
+    fig.savefig("decision_tree.png")
+
+######################
+###  END CLASSIFY  ###
+######################
+
+
+######################
 ### BEGIN SCHEDULE ###
 ######################
 
 # set schedule
 # schedule.every().minute.at(":00").do(run) # every minute at 00 seconds
-schedule.every().hour.at(":00").do(run) # every hour at 00 minutes
+# schedule.every().hour.at(":00").do(run) # every hour at 00 minutes
 
 # void main
 
 # keep running 
-while True:
-    schedule.run_pending()
-    time.sleep(1) # pause one second
+# while True:
+    # schedule.run_pending()
+    # time.sleep(1) # pause one second
 
 ######################
 ###  END SCHEDULE  ###
@@ -266,6 +324,7 @@ while True:
 
 # run once
 # run()
+classify()
 
 '''
 BEGIN Fast stochastic calculation
