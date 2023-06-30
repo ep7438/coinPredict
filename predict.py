@@ -1,6 +1,6 @@
 # imports
 import datetime
-# import schedule                             
+import schedule                             
 import time
 from coinbase.wallet.client import Client   
 import cbpro                                
@@ -10,24 +10,23 @@ import os
 import csv
 import numpy as np
 import sklearn
-from sklearn.tree import DecisionTreeRegressor # Import Decision Tree Classifier
+from sklearn.tree import DecisionTreeRegressor
 from sklearn import tree
 from sklearn.model_selection import train_test_split
 from matplotlib import pyplot as plt
 
 counter = 0 # num iterations
-#print(MutableMapping)
 
 # connect to cb, cmc
 # api.dat stores cb api key with wallet:accounts:read permission
-#   on first two lines and cmc api key on third
+# on first two lines and cmc api key on third
 # required to execute script 
 handshake = open('api.dat', 'r').read().splitlines()
 client = Client(handshake[0], handshake[1])
 cmc = coinmarketcapapi.CoinMarketCapAPI(handshake[2])
 cbp = cbpro.PublicClient() # for granular trading data
-pd.set_option('display.max_rows', 500) # pandas toggle all data
-pd.set_option('display.max_columns', 50)    
+pd.set_option('display.max_rows', 500)      # pandas display 500 rows
+pd.set_option('display.max_columns', 50)    # and 50 columns
 
 
 #######################
@@ -37,25 +36,23 @@ pd.set_option('display.max_columns', 50)
 def run():
     start_time = time.time() # start timer
 
-    global counter # necessary for schedule mode
+    global counter # keep track of iterations in schedule mode
+    counter += 1
+    
     print("") # OUTPUT CONSOLE
     print(str(counter)) 
 
     # remove temp files from previous runs
-    # perhaps keep them, ie separate folder & timestamp names 
     if (os.path.exists("tmp-cb_CurrentPrice.csv")):
         os.remove("tmp-cb_CurrentPrice.csv")
     if (os.path.exists("tmp-cmc_LatestQuotes.csv")):
         os.remove("tmp-cmc_LatestQuotes.csv")
     if (os.path.exists("tmp-the_Wire.csv")):
         os.remove("tmp-the_Wire.csv")
-    if (os.path.exists("tmp-cmc_Data.csv")):
-        os.remove("tmp-cmc_Data.csv")
     
-    cmcfile = open("tmp-cmc_Data.csv", "w") # data from cmc
-    wirefile = open("tmp-the_Wire.csv", "w") # data from cb
-    wirefile.write("name,price,volatility,rsi\n") # columns
-    outfile = open("output.csv", "a") # final output, append because it is not temporary
+    wirefile = open("tmp-the_Wire.csv", "w")        # data from cb
+    wirefile.write("name,price,volatility,rsi\n")   # columns
+    outfile = open("output.csv", "a")               # final output, append because not temporary
 
     # read from input file to create dictionary { name : cmcid }
     with open("inp-cmc_id.csv", mode="r") as infile:
@@ -63,11 +60,12 @@ def run():
         mydict = dict((rows[0], rows[1]) for rows in reader) 
     mydict_swap = {v: k for k, v in mydict.items()} # reverse -> { cmcid : name }
 
-    next = None # variables
-    names = []
-    numbers = []
-    cmcOrder = []
-    cbDict = {}
+    ### BEGIN CB DATA ###
+    next = None     # variables
+    names = []      # names of coins and tokens
+    numbers = []    # cmcid for coins and tokens
+    cbDict = {}     # coinbase data going to output.txt
+                    # as of 6/30/23 -> name, price, volatility, rsi 
 
     # runs until the next_uri parameter is none
     while True:
@@ -82,8 +80,8 @@ def run():
             nameStr = nameStr.replace(" Wallet", "")
             nameStr = nameStr + "-USD" 
 
+            # filter out staked, delisted, stable coins, etc.
             # if program errors out, the cause is likely here
-            # filter out staked, delisted, stable, etc.               
             exclude = ["Staked SOL-USD","Staked ATOM-USD","Staked XTZ-USD","Staked ADA-USD","ETH2-USD","REPV2-USD","USDC-USD","Cash (USD)-USD","GNT-USD","RGT-USD","TRIBE-USD","UST-USD","WLUNA-USD","MUSD-USD","UPI-USD","RGT-USD","XRP-USD","USDT-USD","DAI-USD","BUSD-USD","GUSD-USD","RLY-USD","KEEP-USD","NU-USD","MIR-USD","OMG-USD","REP-USD","LOOM-USD","YFII-USD","GALA-USD","STG-USD","PAX-USD"]
             
             if nameStr not in exclude:    
@@ -101,14 +99,13 @@ def run():
                 raw = cbp.get_product_historic_rates(product_id = nameStr, granularity = 60)
                 
                 nameStr = nameStr.replace("-USD","") # remove -USD
-                numbers.append(mydict.get(nameStr)) # save to ordered list
+                numbers.append(mydict.get(nameStr)) # save cmcid to numbers list
                 
                 # put in chronological order
                 raw.reverse()
 
                 # pause so cbpro calls don't error out
-                # sometimes required on high performance environments
-                # time.sleep(0.10)
+                # time.sleep(0.10) # sometimes required on high performance environments
                 
                 # send to pandas dataframe
                 dataFrame = pd.DataFrame(raw, columns = ["Date", "Open", "High", "Low", "Close", "Volume"]) 
@@ -119,7 +116,7 @@ def run():
                 # save most recent price
                 currentPrice = dataFrame["Close"].iloc[-1]
 
-                ### BEGIN RSI ###
+                ### begin rsi ###
                 close_delta = dataFrame['Close'].diff()
 
                 # Make two series: one for lower closes and one for higher closes
@@ -132,7 +129,7 @@ def run():
                     
                 rsi = ma_up / ma_down
                 rsi = 100 - (100/(1 + rsi))
-                ###  END RSI  ###
+                ###  end rsi  ###
 
                 # insert log return column to dataFrame, needed for volatility
                 dataFrame.insert(6, "Log Return", np.log(dataFrame['Close']/dataFrame['Close'].shift()))
@@ -141,25 +138,29 @@ def run():
                 # calculate
                 volatilityOut = (dataFrame['Log Return'].std()*252**.5)*100
                 volatilityOut = round(volatilityOut, 2)
-                rsiOut = dataFrame['RSI'].iloc[-1] # pull last, most immediate rsi value
+                rsiOut = dataFrame['RSI'].iloc[-1] # pull last value
                 rsiOut = round(rsiOut, 2)
 
                 # output to the wire
-                wirefile.write(nameStr + "," + str(currentPrice) + "," + str(volatilityOut) + "," + str(rsiOut) + "\n")
+                wirefile.write(str(mydict.get(nameStr)) + "," + str(currentPrice) + "," + str(volatilityOut) + "," + str(rsiOut) + "\n")
+                # output to dict
                 cbDict[nameStr] = str(currentPrice) + "," + str(volatilityOut) + "," + str(rsiOut)
 
         # escape loop            
         if accounts.pagination.next_uri == None:
             break            
 
+    print(cbDict)
+    ###  END CB DATA  ###
+
     ### BEGIN CMC ###
-    cmcOrder = [] # order of cryptos  
+    cmcOrder = []   # order of cryptos  
     data = []       # for text parsing
     num = ""        #
     dataStr = ""    #
     temp = ""       #
 
-    # make string list all cmc ids
+    # make string list of all cmcid's
     idBuild = ""
     for i in numbers:
         idBuild += str(i)
@@ -169,7 +170,7 @@ def run():
     df = pd.DataFrame.from_records(data_quote.data)
     df.to_csv("tmp-cmc_LatestQuotes.csv") # OUTPUT to file
     
-    with open("tmp-cmc_LatestQuotes.csv", mode='r') as fp: # read from cmc file
+    with open("tmp-cmc_LatestQuotes.csv", mode='r') as fp: # read from just created file
         for i, line in enumerate(fp):
             line = line[:-1] # remove newline
             
@@ -177,11 +178,11 @@ def run():
                 for char in reversed(line): # reverse iterate
                     if char == ",":
                         num = num.replace(",", "")
-                        cmcOrder.insert(0, num[::-1]) # insert front, LIFO
-                        num = "" # reset val
+                        cmcOrder.insert(0, num[::-1])   # insert front, LIFO
+                        num = ""                        # reset val
                     num += char            
                 
-            elif i == 13: # 14th line, save bulk data
+            elif i == 20: # 21st line, save bulk data
                 start = len(line) - 4 # ignore the first }}
                 
                 for j in range(start, 0, -1): # splice rows
@@ -202,7 +203,7 @@ def run():
 
             # DECIDE which values to utilize    
 
-            if count == 30: # percent_change_1hr 
+            if count == 10: # percent_change_1hr 
                 if c.isdigit() or c == "-" or c == ".":
                     temp += c 
         
@@ -210,32 +211,34 @@ def run():
         builder1 = mydict_swap.get(cmcOrder[index])
         builder2 = temp
         matrix.append((builder1,builder2))
-        cmcfile.write(builder1 + "," + builder2 + "\n")
         cmcDict[builder1] = builder2
         temp = "" # reset
-
-    # determine top 10 1hr%change performers
-    df = pd.DataFrame(matrix, columns =['name','percent_change_1hr'])
-    df = df.sort_values('percent_change_1hr', ascending=False)
-    df = df[:-1] # drop last row
+    
+    print(cmcDict)
+    
+    # determine top 10 1hr%change performersz
+    dfm = pd.DataFrame(matrix, columns =['name','percent_change_1hr'])
+    dfm = dfm.sort_values('percent_change_1hr', ascending=False)
+    dfm = dfm[:-1] # drop last row
     
     # OUTPUT
-    result = df.head(10)
-    
+    print(dfm)
+    result = dfm.head(10)
+    print(result)
+
     # add names to top10 list
     strBuild = ""
     top10 = []
     orderedPrice = [] 
-    for i in range(0,10): # why 0-10?, this is weird but works, change iteration method
-        strBuild = str(result['name'].iloc[i])
+    for ind in result.index:
+        strBuild = str(result['name'][ind])
         top10.append(strBuild +"-USD") 
-        orderedPrice.append(float(result['percent_change_1hr'].iloc[i]))
+        #orderedPrice.append(result['percent_change_1hr'][ind])
         outfile.write(strBuild + "," + str(cbDict.get(strBuild)) + "," + str(cmcDict.get(strBuild)) + "\n")
-    print(orderedPrice) # OUTPUT 
+    #print(orderedPrice) # OUTPUT 
     ### END CMC ###
  
     wirefile.close() # end files
-    cmcfile.close()
     outfile.close()
 
     end_time = time.time() # OUTPUT console rutime
@@ -265,8 +268,9 @@ def classify():
             print(row[0])
 
     df = pd.read_csv('output.csv')
-    # print(df.columns)
-    # print(df) 
+    df = df.drop('name', axis=1)
+    print(df.columns)
+    print(df) 
 
     # store x and y variables
     # y is the class result, x for the other four
@@ -323,8 +327,8 @@ def classify():
 #################
 
 # run once
-# run()
-classify()
+run()
+# classify()
 
 '''
 BEGIN Fast stochastic calculation
