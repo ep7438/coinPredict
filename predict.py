@@ -191,30 +191,44 @@ def run():
                         dataStr = "" # reset val
                     dataStr += line[j]
                 data.insert(0, dataStr[::-1]) # don't forget first value, added last
-              
+
     # splice column values
     matrix = [[]]
     cmcDict = {}
+    v24h = ""
+    pc1h = ""
+    count = 0 # number of ' chars    
+    reset = False
+
     for index, lineStr in enumerate(data):
-        count = 0
+    
         for c in lineStr:
             if c == "'":
                 count += 1
-
-            # DECIDE which values to utilize    
-
+            
+            if count == 6:  # volume_24h
+                if c.isdigit() or c == "-" or c == ".":
+                    v24h += c
+                    
             if count == 10: # percent_change_1hr 
                 if c.isdigit() or c == "-" or c == ".":
-                    temp += c 
-        
-        # OUTPUT
-        builder1 = mydict_swap.get(cmcOrder[index])
-        builder2 = temp
-        matrix.append((builder1,builder2))
-        cmcDict[builder1] = builder2
-        temp = "" # reset
+                    pc1h += c
+
+            if c == "}" and reset == False:
+                reset = True
+            
+            elif c == "}" and reset == True: # reset
+                builder1 = mydict_swap.get(cmcOrder[index])
+                builder2 = pc1h
+                matrix.append((builder1, builder2))
+                cmcDict[builder1] = builder2
+                print(builder1 + "," + v24h + "," + pc1h)
+                v24h = ""
+                pc1h = ""
+                count = 0
+                reset = False                    
     
-    print(cmcDict)
+    #print(cmcDict)
     
     # determine top 10 1hr%change performersz
     dfm = pd.DataFrame(matrix, columns =['name','percent_change_1hr'])
@@ -222,9 +236,9 @@ def run():
     dfm = dfm[:-1] # drop last row
     
     # OUTPUT
-    print(dfm)
+    #print(dfm)
     result = dfm.head(10)
-    print(result)
+    #print(result)
 
     # add names to top10 list
     strBuild = ""
@@ -331,6 +345,10 @@ run()
 # classify()
 
 '''
+
+# Is it better to use outside libraries for technical analysis indicators or code it myself, as below?
+# I should probably first find out if my code vs an outside library produce a similar result...
+
 BEGIN Fast stochastic calculation
     %K = (Current Close - Lowest Low)/
     (Highest High - Lowest Low) * 100
@@ -365,7 +383,4 @@ stochs = stochastics( df, 'Low', 'High', 'Close', 14, 3 )
 slow_k = stochs['k_slow'].values
 fast_k = stochs['k_fast'].values
 ### END FAST STOCHASTIC CALCULATION
-
-# example cmc output
-# "{u'USD': {u'percent_change_60d': -46.9785509, u'market_cap_dominance': 0.0244, u'percent_change_7d': -17.47625752, u'price': 3.1982419442751278, u'volume_change_24h': 14.9018, u'percent_change_90d': -39.65488546, u'percent_change_24h': -7.39091959, u'tvl': 3323604703.28227, u'market_cap': 249490627.3795067, u'volume_24h': 6477255.6591379, u'percent_change_30d': -31.81212781, u'last_updated': u'2023-06-15T05:04:00.000Z', u'percent_change_1h': -0.03585149, u'fully_diluted_market_cap': 319824194.43}}"
 '''
